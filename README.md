@@ -30,3 +30,8 @@ Required Python packages:
 
 ```bash
 pip install numpy pandas scipy matplotlib
+
+Python: 3.12.7 | packaged by Anaconda, Inc. | (main, Oct  4 2024, 13:17:27) [MSC v.1929 64 bit (AMD64)]
+NumPy: 1.26.4
+Pandas: 2.2.2
+SciPy: 1.13.1
