@@ -37,8 +37,8 @@ def load_chromatogram(file_path: str | Path) -> pd.DataFrame:
 
 def create_ri_calibration() -> chem.Cal:
     """Create RI calibration from retention time and molecular weight standards."""
-    retention_times = np.array([22.745, 26.025, 28.517, 30.565])
-    molecular_weights = np.array([364000, 49350, 6250, 850])
+    retention_times = np.array([22.745, 26.025, 28.517, 30.565]) #update as needed
+    molecular_weights = np.array([364000, 49350, 6250, 850]) #update as needed
 
     interpolation = interp1d(
         retention_times,
@@ -61,7 +61,7 @@ def create_ri_calibration() -> chem.Cal:
 def analyze_sec_trace(
     df: pd.DataFrame,
     calibration: chem.Cal,
-    peak_bounds: tuple[float, float] = (24, 30),
+    peak_bounds: tuple[float, float] = (t1,t2),
 ) -> chem.SECSignal:
     """Apply baseline correction, integrate peak, and return SEC signal object."""
     signal = chem.SECSignal(
@@ -79,8 +79,8 @@ def analyze_sec_trace(
 
 def main() -> None:
     """Run SEC/GPC molecular weight analysis."""
-    file_path = Path(r"E:\kugel\20250904_kugel.csv")
-    peak_bounds = (24, 30)
+    file_path = Path()
+    peak_bounds = (t1,t2) #define as needed
 
     chromatogram = load_chromatogram(file_path)
     calibration = create_ri_calibration()
