@@ -1,0 +1,147 @@
+Batch HFIP SEC/GPC molecular weight analysis using chem_analysis.
+
+This script:
+1. Loads SEC/GPC chromatogram CSV files.
+2. Applies a refractive index calibration curve.
+3. Performs adaptive polynomial baseline correction.
+4. Integrates the polymer peak over defined retention-time bounds.
+5. Prints molecular weight statistics and plots chromatograms.
+"""
+
+import logging
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from scipy import stats
+
+import chem_analysis as chem
+import chem_analysis.algorithms.baseline_correction as chem_bc
+
+
+chem.logger_analysis.setLevel(logging.CRITICAL)
+
+
+def load_chromatogram(file_path: Path) -> pd.DataFrame:
+    """Load and clean SEC/GPC chromatogram data."""
+    df = pd.read_csv(file_path, header=1, index_col=0)
+    df = df.iloc[:30001, :2]  #update as needed
+    df.columns = ["signal"]
+    df.index.names = ["retention_time_min"]
+
+    return df.apply(pd.to_numeric, errors="coerce")
+
+
+def create_ri_calibration(plot: bool = True) -> chem.Cal:
+    """Create RI calibration from retention-time and molecular-weight standards."""
+    retention_times = np.array([
+        7.381, 9.070, 10.790,
+        7.165, 8.420, 10.180,
+        7.886, 9.575, 11.080,
+    ])  #update as needed
+
+    molecular_weights = np.array([
+        1_226_000, 130_000, 13_630,
+        1_795_000, 273_600, 33_240,
+        536_500, 74_000, 6_960,
+    ]) #update as needed
+
+    log_mw = np.log(molecular_weights)
+
+    slope, intercept, r_value, _, _ = stats.linregress(retention_times, log_mw)
+
+    def calibration_function(retention_time: np.ndarray) -> np.ndarray:
+        return np.exp(slope * retention_time + intercept)
+
+    if plot:
+        time_range = np.linspace(
+            retention_times.min() - 0.5,
+            retention_times.max() + 0.5,
+            500,
+        )
+
+        plt.figure()
+        plt.scatter(retention_times, log_mw, label="Standards")
+        plt.plot(
+            time_range,
+            slope * time_range + intercept,
+            label=f"Linear fit, R² = {r_value**2:.3f}",
+        )
+        plt.xlabel("Retention time")
+        plt.ylabel("log(Molecular weight)")
+        plt.title("RI Calibration Curve")
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
+    return chem.Cal(
+        calibration_function,
+        lb=200,
+        ub=2_000_000,
+        name="RI calibration",
+    )
+
+
+def analyze_file(
+    file_path: Path,
+    output_dir: Path,
+    peak_bounds: tuple[float, float] = (t1, t2),  #update as needed
+) -> None:
+    """Analyze one SEC/GPC chromatogram."""
+    print(f"Processing: {file_path.name}")
+
+    df = load_chromatogram(file_path)
+    calibration = create_ri_calibration(plot=True)
+
+    signal = chem.SECSignal(
+        ser=df["signal"],
+        cal=calibration,
+        x_label="retention_time_min",
+        y_label="signal",
+    )
+
+    signal.pipeline.add(chem_bc.adaptive_polynomial_baseline)
+    signal.peak_picking(lb=peak_bounds[0], ub=peak_bounds[1])
+
+    sample_output_dir = output_dir / file_path.stem
+    sample_output_dir.mkdir(parents=True, exist_ok=True)
+
+    signal.stats(num_sig_figs=4)
+    signal.plot()
+
+
+def process_files(
+    input_dir: Path,
+    output_dir: Path,
+    start_sample: int = 1,
+    end_sample: int | None = None,
+) -> None:
+    """Process CSV files in a selected sample range."""
+    csv_files = sorted(input_dir.glob("*.csv"))
+
+    if end_sample is None:
+        end_sample = len(csv_files)
+
+    selected_files = csv_files[start_sample - 1:end_sample]
+
+    print(f"Processing folder: {input_dir.name}")
+    print(f"Number of files selected: {len(selected_files)}")
+
+    for file_path in selected_files:
+        analyze_file(file_path, output_dir)
+
+
+def main() -> None:
+    """Run batch SEC/GPC analysis."""
+    input_dir = Path()
+    output_dir = Path()
+
+    start_sample = 0
+    end_sample = #  #update as needed
+
+    process_files(input_dir, output_dir, start_sample, end_sample)
+
+
+if __name__ == "__main__":
+    main()
