@@ -1,0 +1,230 @@
+"""
+THF SEC/GPC molecular weight analysis using chem_analysis.
+
+This script processes SEC/GPC chromatogram CSV files, applies a refractive
+index calibration curve, performs adaptive polynomial baseline correction,
+integrates the selected polymer peak, and reports molecular weight statistics.
+
+Input files are expected to be semicolon-delimited CSV files with metadata in
+the first two rows and retention time / RI signal in the first two columns.
+"""
+
+import logging
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from scipy import stats
+
+import chem_analysis as chem
+import chem_analysis.algorithms.baseline_correction as chem_bc
+
+
+# -----------------------------
+# User-defined settings
+# -----------------------------
+INPUT_DIR = Path()
+OUTPUT_DIR = INPUT_DIR / "analysis"
+
+START_SAMPLE = 0
+END_SAMPLE = #define
+
+PEAK_BOUNDS = (t1,t2) #update as needed
+
+CALIBRATION_TIMES = np.array([
+    8.555, 8.909, 9.578,
+    9.953, 10.424, 11.003,
+    11.431, 11.887, 12.500,
+    12.744, 14.127,
+]) #update as needed
+
+CALIBRATION_MW = np.array([
+    364_000, 217_100, 91_450,
+    56_600, 29_460, 12_980,
+    6_660, 3_050, 1_250,
+    935, 162,
+]) #update as needed
+
+MW_BOUNDS = (100, 364_000)
+
+
+# Suppress detailed chem_analysis logging output
+chem.logger_analysis.setLevel(logging.CRITICAL)
+
+
+def load_chromatogram(file_path: Path) -> pd.DataFrame:
+    """
+    Load and clean SEC/GPC chromatogram data.
+
+    Parameters
+    ----------
+    file_path : Path
+        Path to the raw SEC/GPC CSV file.
+
+    Returns
+    -------
+    pd.DataFrame
+        Cleaned chromatogram with retention time as the index and RI signal
+        as the data column.
+    """
+    chromatogram = pd.read_csv(
+        file_path,
+        sep=";",
+        skiprows=2,
+        usecols=[0, 1],
+        index_col=0,
+    )
+
+    chromatogram = chromatogram.iloc[:30001, :2]
+    chromatogram.columns = ["signal"]
+    chromatogram.index.names = ["retention_time_min"]
+
+    return chromatogram.apply(pd.to_numeric, errors="coerce")
+
+
+def create_ri_calibration(plot: bool = True) -> chem.Cal:
+    """
+    Create an RI calibration curve from retention-time standards.
+
+    A linear regression is performed on log(MW) as a function of retention time.
+
+    Parameters
+    ----------
+    plot : bool
+        If True, display the calibration curve.
+
+    Returns
+    -------
+    chem.Cal
+        Calibration object for SEC molecular weight analysis.
+    """
+    log_mw = np.log(CALIBRATION_MW)
+    slope, intercept, r_value, _, _ = stats.linregress(
+        CALIBRATION_TIMES,
+        log_mw,
+    )
+
+    def calibration_function(retention_time: np.ndarray) -> np.ndarray:
+        """Convert retention time to molecular weight."""
+        return np.exp(slope * retention_time + intercept)
+
+    if plot:
+        time_range = np.linspace(
+            CALIBRATION_TIMES.min() - 0.5,
+            CALIBRATION_TIMES.max() + 0.5,
+            500,
+        )
+
+        plt.figure()
+        plt.scatter(CALIBRATION_TIMES, log_mw, label="Standards")
+        plt.plot(
+            time_range,
+            slope * time_range + intercept,
+            label=f"Linear fit, R² = {r_value**2:.3f}",
+        )
+        plt.xlabel("Retention time (min)")
+        plt.ylabel("log(Molecular weight)")
+        plt.title("RI Calibration Curve")
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
+    return chem.Cal(
+        calibration_function,
+        lb=MW_BOUNDS[0],
+        ub=MW_BOUNDS[1],
+        name="RI calibration",
+    )
+
+
+def analyze_chromatogram(
+    file_path: Path,
+    output_dir: Path,
+    calibration: chem.Cal,
+    peak_bounds: tuple[float, float] = PEAK_BOUNDS,
+) -> None:
+    """
+    Analyze a single SEC/GPC chromatogram.
+
+    Parameters
+    ----------
+    file_path : Path
+        Path to the chromatogram CSV file.
+    output_dir : Path
+        Directory where analysis outputs are saved.
+    calibration : chem.Cal
+        SEC calibration object.
+    peak_bounds : tuple[float, float]
+        Lower and upper retention-time bounds for peak integration.
+    """
+    print(f"Processing: {file_path.name}")
+
+    chromatogram = load_chromatogram(file_path)
+
+    signal = chem.SECSignal(
+        ser=chromatogram["signal"],
+        cal=calibration,
+        x_label="retention_time_min",
+        y_label="signal",
+    )
+
+    signal.pipeline.add(chem_bc.adaptive_polynomial_baseline)
+    signal.peak_picking(lb=peak_bounds[0], ub=peak_bounds[1])
+
+    sample_output_dir = output_dir / file_path.stem
+    sample_output_dir.mkdir(parents=True, exist_ok=True)
+
+    signal.stats(num_sig_figs=4)
+    signal.plot()
+
+
+def get_selected_files(
+    input_dir: Path,
+    start_sample: int = 1,
+    end_sample: int | None = None,
+) -> list[Path]:
+    """
+    Return sorted CSV files within the selected sample range.
+
+    Sample numbers are treated as 1-indexed positions in the sorted file list.
+    """
+    csv_files = sorted(input_dir.glob("*.csv"))
+
+    if end_sample is None:
+        end_sample = len(csv_files)
+
+    return csv_files[start_sample - 1:end_sample]
+
+
+def process_files(
+    input_dir: Path,
+    output_dir: Path,
+    start_sample: int = 1,
+    end_sample: int | None = None,
+) -> None:
+    """Process selected SEC/GPC chromatogram files."""
+    selected_files = get_selected_files(input_dir, start_sample, end_sample)
+
+    print(f"Processing folder: {input_dir}")
+    print(f"Number of files selected: {len(selected_files)}")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    calibration = create_ri_calibration(plot=True)
+
+    for file_path in selected_files:
+        analyze_chromatogram(file_path, output_dir, calibration)
+
+
+def main() -> None:
+    """Run SEC/GPC batch analysis."""
+    process_files(
+        input_dir=INPUT_DIR,
+        output_dir=OUTPUT_DIR,
+        start_sample=START_SAMPLE,
+        end_sample=END_SAMPLE,
+    )
+
+
+if __name__ == "__main__":
+    main()
