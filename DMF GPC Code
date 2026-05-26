@@ -1,4 +1,4 @@
-SEC/GPC molecular weight analysis using chem_analysis.
+DMF SEC/GPC molecular weight analysis using chem_analysis.
 
 This script:
 1. Loads raw SEC/GPC chromatogram data from a CSV file.
